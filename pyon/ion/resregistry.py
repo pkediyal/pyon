@@ -25,6 +25,7 @@ class ResourceRegistry(object):
     """
     Class that uses a data store to provide a resource registry.
     """
+    DEFAULT_ATTACHMENT_NAME = 'resource.attachment'
 
     def __init__(self, datastore_manager=None):
 
@@ -41,7 +42,15 @@ class ResourceRegistry(object):
         """
         self.rr_store.close()
 
-    def create(self, object=None, actor_id=None, object_id=None):
+    def create(self, object=None, actor_id=None, object_id=None, attachments=None):
+        """
+        Accepts object that is to be stored in the data store and tags them with additional data
+        (timestamp and such) If actor_id is provided, creates hasOwner association with objects.
+        If attachments are provided
+        (in dict(att1=dict(data=xyz), att2=dict(data=aaa, content_type='text/plain') form)
+        they get attached to the object.
+        Returns a tuple containing object and revision identifiers.
+        """
         if object is None:
             raise BadRequest("Object not present")
         if not isinstance(object, IonObjectBase):
@@ -58,7 +67,7 @@ class ResourceRegistry(object):
             new_res_id = create_unique_resource_id()
         else:
             new_res_id = object_id
-        res = self.rr_store.create(object, new_res_id)
+        res = self.rr_store.create(object, new_res_id, attachments=attachments)
         res_id, rev = res
 
         if actor_id and actor_id != 'anonymous':
@@ -113,8 +122,8 @@ class ResourceRegistry(object):
 
         object.ts_updated = get_ion_ts()
         if res_obj.lcstate != object.lcstate:
-            log.warn("Cannot modify %s life cycle state in update current=%s given=%s. " + 
-                     "DO NOT REUSE THE SAME OBJECT IN CREATE THEN UPDATE", 
+            log.warn("Cannot modify %s life cycle state in update current=%s given=%s. " +
+                     "DO NOT REUSE THE SAME OBJECT IN CREATE THEN UPDATE",
                       type(res_obj).__name__, res_obj.lcstate, object.lcstate)
             object.lcstate = res_obj.lcstate
 
@@ -208,6 +217,11 @@ class ResourceRegistry(object):
                                      old_state=old_state, new_state=target_lcstate)
 
     def create_attachment(self, resource_id='', attachment=None):
+        """
+        Persists the given attachment and associates it with the given resource.
+        Returns an identifier for the attachment from the data store.
+        """
+
         if attachment is None:
             raise BadRequest("Object not present")
         if not isinstance(attachment, Attachment):
@@ -222,27 +236,39 @@ class ResourceRegistry(object):
         elif attachment.attachment_type == AttachmentType.ASCII:
             if type(attachment.content) is not str:
                 raise BadRequest("Attachment content must be str")
+            attachment.content = base64.encodestring(attachment.content)
         elif attachment.attachment_type == AttachmentType.OBJECT:
             pass
         else:
             raise BadRequest("Unknown attachment-type: %s" % attachment.attachment_type)
 
-        att_id, _ = self.create(attachment)
+        content = dict(data=attachment.content, content_type=attachment.content_type)
+        attachment.content = self.DEFAULT_ATTACHMENT_NAME
+
+        att_id, _ = self.create(attachment, attachments={self.DEFAULT_ATTACHMENT_NAME: content})
+        # for multiple attachments use the below sample
+        # attachments = dict(att1=dict(data=xyz), att2=dict(data=aaa, content_type='text/plain')
 
         if resource_id:
             self.rr_store.create_association(resource_id, PRED.hasAttachment, att_id)
 
         return att_id
 
-    def read_attachment(self, attachment_id=''):
+    def read_attachment(self, attachment_id='', include_content=False):
+        """
+        Returns the metadata of an attachment. Unless indicated otherwise the content returned
+        is only a name to the actual attachment content.
+        """
         attachment = self.read(attachment_id)
         if not isinstance(attachment, Attachment):
             raise Inconsistent("Object in datastore must be Attachment, not %s" % type(attachment))
 
-        if attachment.attachment_type == AttachmentType.BLOB:
-            if type(attachment.content) is not str:
-                raise BadRequest("Attachment content must be str")
-            attachment.content = base64.decodestring(attachment.content)
+        if include_content:
+            attachment.content = self.rr_store.read_attachment(attachment_id,
+                                                               attachment_name=attachment.content)
+            if attachment.attachment_type == AttachmentType.BLOB:
+                if type(attachment.content) is not str:
+                    raise BadRequest("Attachment content must be str")
 
         return attachment
 
@@ -252,8 +278,9 @@ class ResourceRegistry(object):
     def find_attachments(self, resource_id='', keyword=None,
                          limit=0, descending=False, include_content=False, id_only=True):
         key = [resource_id]
-        att_res = self.rr_store.find_by_view("attachment", "by_resource", start_key=key, end_key=list(key),
-            descending=descending, limit=limit, id_only=True)
+        att_res = self.rr_store.find_by_view("attachment", "by_resource", start_key=key,
+                                             end_key=list(key), descending=descending, limit=limit,
+                                             id_only=True)
 
         att_ids = [att[0] for att in att_res if not keyword or keyword in att[1][2]]
         if id_only:
@@ -262,7 +289,8 @@ class ResourceRegistry(object):
             atts = self.rr_store.read_mult(att_ids)
             if include_content:
                 for att in atts:
-                    att.content = None
+                    att.content = self.rr_store.read_attachment(doc=att._id,
+                                                                attachment_name=att.content)
             return atts
 
     def create_association(self, subject=None, predicate=None, object=None, assoc_type=None):
