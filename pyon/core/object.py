@@ -416,14 +416,26 @@ class IonObjectSerializer(IonObjectSerializationBase):
 
     Used by the codec interceptor and when being written to CouchDB.
     """
-
     serialize = IonObjectSerializationBase.operate
+
+    def __init__(self, update_version = False):
+        self._update_version = update_version
+        super(IonObjectSerializer, self).__init__()
 
     def _transform(self, obj):
         if isinstance(obj, IonObjectBase):
             res = dict((k, v) for k, v in obj.__dict__.iteritems() if k in obj._schema or k in built_in_attrs)
             if not 'type_' in res:
                 res['type_'] = obj._get_type()
+
+            # update type_version if serializing for persistence
+            if self._update_version and obj._class_info['decorators'].has_key('TypeVersion')  \
+                and obj._class_info['decorators']['TypeVersion'] != obj._schema['type_version']:
+
+                # convert TypeVersion in decorator from string to int
+                # this is a hack because the object_model_generator converts TypeVersion to string
+                res['type_version']=int(obj._class_info['decorators']['TypeVersion'])
+
             return res
 
         return obj

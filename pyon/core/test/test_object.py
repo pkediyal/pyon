@@ -5,6 +5,8 @@ __license__ = 'Apache 2.0'
 
 from pyon.core.registry import IonObjectRegistry
 from pyon.core.bootstrap import IonObject
+from pyon.core.object import IonObjectSerializer, IonObjectDeserializer
+from pyon.core.bootstrap import get_obj_registry
 from pyon.util.int_test import IonIntegrationTestCase
 from nose.plugins.attrib import attr
 
@@ -50,11 +52,40 @@ class ObjectTest(IonIntegrationTestCase):
         obj.abstract_val = user_info
         obj._validate
 
+    def test_type_version(self):
+
+
+        io_serializer = IonObjectSerializer(update_version = True)
+        obj = IonObject('SampleResource',{'num':9, 'other_field':'test value'})
+        obj_dict = io_serializer.serialize(obj)
+        # simulate a previous version data of SampleResource_V2
+        obj_dict['type_'] = 'SampleResource_V2'
+
+        # verify that the simulated previous version data does not have new_attribute
+        self.assertEquals(obj_dict.has_key('new_attribute'), False)
+        # simulate reading the previous version that does not have new_attribute
+        io_deserializer = IonObjectDeserializer(obj_registry=get_obj_registry())
+        obj = io_deserializer.deserialize(obj_dict)
+        # verify that new attribute is added and initialized with default value
+        self.assertEquals(obj.new_attribute['key'], 'value')
+        # verify that old attributes are still there
+        self.assertEquals(obj.num, 9)
+        # verify that old attributes are still there
+        self.assertEquals(obj.other_field, 'test value')
+        # verify that on read version is not yet updated
+        self.assertEquals(obj_dict['type_version'], 1)
+
+        # simulate create/update
+        obj_dict = io_serializer.serialize(obj)
+        # verify that version is updated
+        self.assertEquals(obj_dict['type_version'], 2)
+
     def test_decorator_validation(self):
         #
         # Test required values
         #
         obj = IonObject('Deco_Example', {"list1": [1], "list2": ["One element"], "dict1": {"key1": 1}, "dict2": {"key1": 1}, "us_phone_number": "555-555-5555"})
+
         # Should fail because required value not provided
         self.assertRaises(AttributeError, obj._validate)
 
