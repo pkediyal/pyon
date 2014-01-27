@@ -629,7 +629,17 @@ class ExtendedResourceContainer(object):
 
         # Step 3: Read resource objects based on needs
         res_list = self._rr.read_mult(list(resource_needs))
-        res_objs = dict(zip(resource_needs, res_list))
+
+
+        cur_time = int(round(time.time() * 1000))
+        i = 0
+        res_objs={}
+        for res in res_list:
+            # include if not expired or retired commitments
+            if not ((res.type_ == "Commitment") and ((res.lcstate == 'RETIRED') or
+                        ((cur_time > int(res.expiration)) and (int(res.expiration)>0)))):
+                res_objs[resource_needs[i]]= res
+            i = i + 1
 
         # Step 4: Set fields to loaded resource objects based on type
         for field, need_type, needs in field_needs:
